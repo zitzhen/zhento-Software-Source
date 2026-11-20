@@ -15,6 +15,16 @@ if [[ ! "$upstream_url" =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/
   exit 1
 fi
 
+# GitHub runners prepend rustup shims to PATH. The Debian cargo wrapper used by
+# dh-cargo must pair with the distribution rustc; rustup's shims otherwise
+# select an inconsistent toolchain and fail with "can't find crate for core".
+clean_path="$(printf '%s' "$PATH" | tr ':' '\n' | grep -v '\.cargo/bin' | paste -sd: -)"
+if [[ -n "$clean_path" ]]; then
+  PATH="$clean_path"
+  export PATH
+fi
+unset RUSTUP_HOME RUSTUP_TOOLCHAIN CARGO_HOME RUSTC RUSTDOC RUSTFLAGS || true
+
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
 
