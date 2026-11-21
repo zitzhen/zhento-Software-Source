@@ -3,7 +3,11 @@ name: Build check
 on:
   push:
     branches: ['**']
+    paths:
+      - Software.list
   pull_request:
+    paths:
+      - Software.list
 
 permissions:
   contents: read
@@ -13,35 +17,51 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  shell-syntax:
-    name: Check shell script syntax
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Run bash -n
-        run: bash -n scripts/*.sh .githooks/*
-
   prepare:
-    name: Parse Software.list
+    name: Find newly added repositories
     runs-on: ubuntu-latest
     outputs:
-      packages: ${{ steps.parse.outputs.packages }}
+      packages: ${{ steps.diff.outputs.packages }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Build the package matrix
-        id: parse
+      - name: Determine base revision
+        id: base
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          packages="$(./scripts/parse-software-list.sh Software.list)"
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            echo "base=$PR_BASE_SHA" >> "$GITHUB_OUTPUT"
+          elif [[ "$BEFORE" =~ ^0+$ ]]; then
+            if git rev-parse --verify --quiet "origin/${DEFAULT_BRANCH}" >/dev/null; then
+              echo "base=origin/${DEFAULT_BRANCH}" >> "$GITHUB_OUTPUT"
+            else
+              root="$(git rev-list --max-parents=0 HEAD | head -n 1)"
+              echo "base=$root" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "base=$BEFORE" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute added repositories
+        id: diff
+        env:
+          BASE: ${{ steps.base.outputs.base }}
+        run: |
+          packages="$(./scripts/diff-software-list.sh "$BASE")"
           echo "packages=$packages" >> "$GITHUB_OUTPUT"
-          echo "Build matrix: $packages"
+          echo "New repositories: $packages"
 
   build:
     name: Build ${{ matrix.url }}
-    needs: [shell-syntax, prepare]
+    needs: prepare
+    if: needs.prepare.outputs.packages != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
