@@ -1,0 +1,60 @@
+name: Build check
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shell-syntax:
+    name: Check shell script syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Run bash -n
+        run: bash -n scripts/*.sh .githooks/*
+
+  prepare:
+    name: Parse Software.list
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.parse.outputs.packages }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build the package matrix
+        id: parse
+        run: |
+          packages="$(./scripts/parse-software-list.sh Software.list)"
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+          echo "Build matrix: $packages"
+
+  build:
+    name: Build ${{ matrix.url }}
+    needs: [shell-syntax, prepare]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.packages) }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq devscripts equivs dpkg-dev
+
+      - name: Build the binary package
+        run: ./scripts/build-deb.sh "${{ matrix.url }}" "$RUNNER_TEMP/debs"
